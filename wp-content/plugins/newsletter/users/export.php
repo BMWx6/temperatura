@@ -27,6 +27,7 @@ for ($i = 1; $i <= NEWSLETTER_LIST_MAX; $i++) {
         </p>
 
     </div>
+    
     <div id="tnp-body">
 
         <form method="post" action="<?php echo admin_url('admin-ajax.php') ?>?action=newsletter_users_export">

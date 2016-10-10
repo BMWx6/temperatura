@@ -32,6 +32,7 @@ if (!$controls->is_action()) {
 if ($controls->is_action('test') || $controls->is_action('save') || $controls->is_action('send') || $controls->is_action('editor')) {
 
     // If we were editing with visual editor (==0), we must read the extra <body> content
+    $email['message'] = str_ireplace('<script', '', $controls->data['message']);
     if ($email['editor'] == 0) {
         $x = strpos($email['message'], '<body');
         if ($x !== false) {
@@ -43,7 +44,7 @@ if ($controls->is_action('test') || $controls->is_action('save') || $controls->i
     } else {
         $email['message'] = $controls->data['message'];
     }
-    $email['message_text'] = $controls->data['message_text'];
+    $email['message_text'] = str_ireplace('<script', '', $controls->data['message_text']);
     $email['subject'] = $controls->data['subject'];
     $email['track'] = $controls->data['track'];
     $email['private'] = $controls->data['private'];
@@ -237,7 +238,7 @@ if ($email['editor'] == 0) {
         theme_advanced_resizing: true,
         theme_advanced_toolbar_location: "top",
         document_base_url: "<?php echo get_option('home'); ?>/",
-        content_css: ["<?php echo plugins_url('newsletter') ?>/emails/editor.css", "<?php echo plugins_url('newsletter') . '/emails/css.php?id=' . $email_id . '&' . time(); ?>"]
+        content_css: ["<?php echo plugins_url('newsletter') ?>/emails/editor.css", "<?php echo home_url('/') . '?na=emails-css&id=' . $email_id . '&' . time(); ?>"]
     });
 
     jQuery(document).ready(function () {
@@ -248,6 +249,7 @@ if ($email['editor'] == 0) {
 
         window.send_to_editor = function (html) {
             var imgURL = html.match(/src=\"(.*?)\"/);
+            if (imgURL.indexOf("http") !== 0) imgURL = "http:" + imgURL;
             tinyMCE.execCommand('mceInsertContent', false, '<img src="' + imgURL[1] + '" />');
             tb_remove();
         }
@@ -450,7 +452,7 @@ if ($email['editor'] == 0) {
                 <table class="form-table">
                     <tr valign="top">
                         <th>Email status</th>
-                        <td><?php echo $email['status']; ?></td>
+                        <td><?php echo esc_html($email['status']); ?></td>
                     </tr>
                     <tr valign="top">
                         <th>Messages sent</th>
@@ -458,7 +460,11 @@ if ($email['editor'] == 0) {
                     </tr>
                     <tr valign="top">
                         <th>Query (tech)</th>
-                        <td><?php echo $email['query']; ?></td>
+                        <td><?php echo esc_html($email['query']); ?></td>
+                    </tr>
+                    <tr valign="top">
+                        <th>Token (tech)</th>
+                        <td><?php echo esc_html($email['token']); ?></td>
                     </tr>
                 </table>
             </div>

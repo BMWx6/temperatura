@@ -1,4 +1,5 @@
 <?php
+if (!defined('ABSPATH')) exit;
 
 require_once NEWSLETTER_INCLUDES_DIR . '/module.php';
 
@@ -24,31 +25,128 @@ class NewsletterStatistics extends NewsletterModule {
         add_action('wp_loaded', array($this, 'hook_wp_loaded'));
     }
 
+    /**
+     * 
+     * @global wpdb $wpdb
+     */
     function hook_wp_loaded() {
         global $wpdb;
 
         // Newsletter Link Tracking
         if (isset($_GET['nltr'])) {
-            $_GET['r'] = $_GET['nltr'];
-            include dirname(__FILE__) . '/link.php';
+            
+            list($email_id, $user_id, $url, $anchor, $key) = explode(';', base64_decode($_GET['nltr']), 5);
+
+            if (!is_user_logged_in()) {
+                if (empty($email_id) || empty($user_id) || empty($url)) {
+                    header("HTTP/1.0 404 Not Found");
+                    die();
+                }
+            }
+
+            $parts = parse_url($url);
+
+            $verified = $parts['host'] == $_SERVER['HTTP_HOST'];
+            if (!$verified) {
+                $verified = $key == md5($email_id . ';' . $user_id . ';' . $url . ';' . $anchor . $this->options['key']);
+            }
+
+            // For feed by mail tests
+            if ($verified && empty($email_id) && is_user_logged_in()) {
+                header('Location: ' . $url);
+                die();
+            }
+
+            $ip = preg_replace('/[^0-9a-fA-F:., ]/', '', $_SERVER['REMOTE_ADDR']);
+
+            if ($verified) {
+                $wpdb->insert(NEWSLETTER_STATS_TABLE, array(
+                    'email_id' => $email_id,
+                    'user_id' => $user_id,
+                    'url' => $url,
+                    'ip' => $ip
+                        )
+                );
+
+                $wpdb->query($wpdb->prepare("update " . NEWSLETTER_SENT_TABLE . " set open=2, ip=%s where email_id=%d and user_id=%d limit 1", $ip, $email_id, $user_id));
+
+                $user = Newsletter::instance()->get_user($user_id);
+                if ($user) {
+                    setcookie('newsletter', $user->id . '-' . $user->token, time() + 60 * 60 * 24 * 365, '/');
+                }
+                header('Location: ' . $url);
+                die();
+            } else {
+                header("HTTP/1.0 404 Not Found");
+            }
+            ?><html>
+                <head>
+                    <style>
+                        body {
+                            font-family: sans-serif;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div style="max-width: 100%; width: 500px; margin: 40px auto; text-align: center">
+                        <p>The requested URL (<?php echo esc_html($url) ?>) has not been verified.</p>
+                        <p>You can follow it if you recognize it as a valid URL.</p>
+                    </div>
+                </body>
+            </html>
+            <?php
             die();
         }
 
         // Newsletter Open Traking Image
         if (isset($_GET['noti'])) {
-            list($email_id, $user_id) = explode(';', base64_decode($_GET['noti']), 2);
+            $this->logger->debug('Open tracking: ' . $_GET['noti']);
 
-            $wpdb->insert(NEWSLETTER_STATS_TABLE, array(
-                'email_id' => (int)$email_id,
-                'user_id' => (int)$user_id,
-                'ip' => $_SERVER['REMOTE_ADDR'])
-            );
+            list($email_id, $user_id, $signature) = explode(';', base64_decode($_GET['noti']), 3);
+
+            $email = $this->get_email($email_id);
+            if (!$email) {
+                $this->logger->error('Open tracking request for unexistant email');
+                die();
+            }
+
+            $user = $this->get_user($user_id);
+            if (!$user) {
+                $this->logger->error('Open tracking request for unexistant subscriber');
+                die();
+            }
+
+            if ($email->token) {
+                $this->logger->debug('Signature: ' . $signature);
+                $s = md5($email_id . $user_id . $email->token);
+                if ($s != $signature) {
+                    $this->logger->error('Open tracking request with wrong signature. Email token: ' . $email->token);
+                    die();
+                }
+            } else {
+                $this->logger->info('Email with no token hence not signature to check');
+            }
+
+            $row = $wpdb->get_row($wpdb->prepare("select * from " . NEWSLETTER_STATS_TABLE . " where email_id=%d and user_id=%d and url='' limit 1", $email->id, $user->id));
+            if ($row) {
+                $this->logger->info('Open already registered');
+                // MAybe an update for some fields?
+            } else {
+                
+                $res = $wpdb->insert(NEWSLETTER_STATS_TABLE, array(
+                    'email_id' => (int) $email_id,
+                    'user_id' => (int) $user_id,
+                    'ip' => $_SERVER['REMOTE_ADDR'])
+                );
+                if (!$res) {
+                    $this->logger->fatal($wpdb->last_error);
+                }
+            }
 
             header('Content-Type: image/gif');
             echo base64_decode('_R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
             die();
         }
-
     }
 
     function upgrade() {
@@ -88,7 +186,6 @@ class NewsletterStatistics extends NewsletterModule {
         $this->upgrade_query("ALTER TABLE `{$wpdb->prefix}newsletter_emails` ADD COLUMN `open_count` int UNSIGNED NOT NULL DEFAULT 0");
         $this->upgrade_query("ALTER TABLE `{$wpdb->prefix}newsletter_emails` ADD COLUMN `click_count`  int UNSIGNED NOT NULL DEFAULT 0");
         $this->upgrade_query("alter table {$wpdb->prefix}newsletter_emails change column read_count open_count int not null default 0");
-
     }
 
     function admin_menu() {
@@ -101,12 +198,16 @@ class NewsletterStatistics extends NewsletterModule {
         $this->add_admin_page('view_users', 'Statistics');
     }
 
-    function relink($text, $email_id, $user_id) {
+    function relink($text, $email_id, $user_id, $email_token = '') {
         $this->relink_email_id = $email_id;
         $this->relink_user_id = $user_id;
+        $this->relink_email_token = $email_token;
+
+        $this->logger->debug('Relink with token: ' . $email_token);
         $text = preg_replace_callback('/(<[aA][^>]+href=["\'])([^>"\']+)(["\'][^>]*>)(.*?)(<\/[Aa]>)/', array($this, 'relink_callback'), $text);
 
-        $text = str_replace('</body>', '<img width="1" height="1" alt="" src="' . home_url('/') . '?noti=' . urlencode(base64_encode($email_id . ';' . $user_id)) . '"/></body>', $text);
+        $signature = md5($email_id . $user_id . $email_token);
+        $text = str_replace('</body>', '<img width="1" height="1" alt="" src="' . home_url('/') . '?noti=' . urlencode(base64_encode($email_id . ';' . $user_id . ';' . $signature)) . '"/></body>', $text);
         return $text;
     }
 

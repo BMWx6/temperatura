@@ -1,4 +1,5 @@
 <?php
+if (!defined('ABSPATH')) exit;
 
 /**
  * Newsletter widget version 2.0: it'll replace the old version left for compatibility.

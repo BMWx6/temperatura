@@ -4,7 +4,7 @@
   Plugin Name: Newsletter
   Plugin URI: http://www.thenewsletterplugin.com/plugins/newsletter
   Description: Newsletter is a cool plugin to create your own subscriber list, to send newsletters, to build your business. <strong>Before update give a look to <a href="http://www.thenewsletterplugin.com/category/release">this page</a> to know what's changed.</strong>
-  Version: 4.6.1
+  Version: 4.6.4
   Author: Stefano Lissa & The Newsletter Team
   Author URI: http://www.thenewsletterplugin.com
   Disclaimer: Use at your own risk. No warranty expressed or implied is provided.
@@ -14,7 +14,7 @@
  */
 
 // Used as dummy parameter on css and js links
-define('NEWSLETTER_VERSION', '4.6.1');
+define('NEWSLETTER_VERSION', '4.6.4');
 
 global $wpdb, $newsletter;
 
@@ -125,6 +125,11 @@ class Newsletter extends NewsletterModule {
         }
         if (isset($_POST['na'])) {
             $this->action = $_POST['na'];
+        }
+        
+        if (!empty($this->action)) {
+            // For old versions of wp super cache
+            $_GET['preview'] = 'true';
         }
 
         $this->time_start = time();
@@ -476,8 +481,8 @@ class Newsletter extends NewsletterModule {
         }
     }
 
-    function relink($text, $email_id, $user_id) {
-        return NewsletterStatistics::instance()->relink($text, $email_id, $user_id);
+    function relink($text, $email_id, $user_id, $email_token = '') {
+        return NewsletterStatistics::instance()->relink($text, $email_id, $user_id, $email_token);
     }
 
     /**
@@ -544,12 +549,18 @@ class Newsletter extends NewsletterModule {
                 return true;
             }
         }
+        
+        $start_time = time();
+        $count = 0;
+        $result = true;
 
-        foreach ($users as &$user) {
+        foreach ($users as $user) {
 
             // Before try to send, check the limits.
-            if (!$test && $this->limits_exceeded())
-                return false;
+            if (!$test && $this->limits_exceeded()) {
+                $result = false;
+                break;
+            }
 
             $headers = array('List-Unsubscribe' => '<' . home_url('/') . '?na=u&nk=' . $user->id . '-' . $user->token . '>');
             $headers['Precedence'] = 'bulk';
@@ -565,7 +576,7 @@ class Newsletter extends NewsletterModule {
 
 
             if ($email->track == 1) {
-                $m = $this->relink($m, $email->id, $user->id);
+                $m = $this->relink($m, $email->id, $user->id, $email->token);
             }
 
             $s = $this->replace($email->subject, $user);
@@ -589,9 +600,18 @@ class Newsletter extends NewsletterModule {
             $wpdb->query($wpdb->prepare("insert into " . $wpdb->prefix . 'newsletter_sent (user_id, email_id, time, status, error) values (%d, %d, %d, %d, %s) on duplicate key update time=%d, status=%d, error=%s', $user->id, $email->id, time(), $status, $this->mail_last_error, time(), $status, $this->mail_last_error));
 
             $this->email_limit--;
+            $count++;
         }
+        $end_time = time();
+        
+        $send_calls = get_option('newsletter_diagnostic_send_calls', array());
+        $send_calls[] = array($start_time, $end_time, $count, $result);
+        
+        if (count($send_calls) > self::MAX_CRON_SAMPLES) array_shift($send_calls);
+        
+        update_option('newsletter_diagnostic_send_calls', $send_calls, false);
 
-        return true;
+        return $result;
     }
 
     /**
@@ -1232,6 +1252,11 @@ class Newsletter extends NewsletterModule {
     }
 
     function save_email($email, $return_format = OBJECT) {
+        if (isset($email['subject'])) {
+            if (mb_strlen($email['subject'], 'UTF-8') > 250) {
+                $email['subject'] = mb_substr($email['subject'], 0, 250, 'UTF-8');
+            }
+        }
         return $this->store->save(NEWSLETTER_EMAILS_TABLE, $email, $return_format);
     }
 
@@ -1414,18 +1439,8 @@ require_once NEWSLETTER_DIR . '/wp/wp.php';
 if (!is_dir(WP_PLUGIN_DIR . '/newsletter-feed')) {
     if (is_file(WP_CONTENT_DIR . '/extensions/newsletter/feed/feed.php')) {
         require_once WP_CONTENT_DIR . '/extensions/newsletter/feed/feed.php';
-    } else {
-        if (get_option('newsletter_feed_demo_disable') != 1) {
-            if (is_file(NEWSLETTER_DIR . '/feed/feed.php')) {
-                require_once NEWSLETTER_DIR . '/feed/feed.php';
-            }
-        }
     }
 }
-
-//if (is_file(WP_CONTENT_DIR . '/extensions/newsletter/updates/updates.php')) {
-//    require_once WP_CONTENT_DIR . '/extensions/newsletter/updates/updates.php';
-//}
 
 if (!is_dir(WP_PLUGIN_DIR . '/newsletter-followup')) {
     if (is_file(WP_CONTENT_DIR . '/extensions/newsletter/followup/followup.php')) {
@@ -1493,7 +1508,7 @@ function newsletter_deactivate() {
 
 function tnpc_render_callback() {
     $block_options = get_option('newsletter_main');
-    include NEWSLETTER_DIR . '/emails/tnp-composer/blocks/' . sanitize_file_name($_POST['b']) . '.block';
+    include NEWSLETTER_DIR . '/emails/tnp-composer/blocks/' . sanitize_file_name($_POST['b']) . '.php';
     wp_die(); // this is required to terminate immediately and return a proper response
 }
 

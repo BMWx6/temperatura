@@ -1,6 +1,8 @@
 <?php
 global $current_user, $wpdb, $newsletter;
 
+if (!defined('ABSPATH')) exit;
+
 $dismissed = get_option('newsletter_dismissed', array());
 
 $user_count = $wpdb->get_var("select count(*) from " . NEWSLETTER_USERS_TABLE . " where status='C'");

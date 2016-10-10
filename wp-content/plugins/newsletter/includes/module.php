@@ -1,4 +1,5 @@
 <?php
+if (!defined('ABSPATH')) exit;
 
 class NewsletterModule {
 
@@ -375,7 +376,7 @@ class NewsletterModule {
     static function format_scheduler_time($name) {
         $time = wp_next_scheduled($name);
         if ($time === false) {
-            return 'Not active';
+            return 'No next run scheduled';
         }
         $delta = $time - time();
         // If less 10 minutes late it can be a cron problem but now it is working
@@ -496,19 +497,21 @@ class NewsletterModule {
         }
 
         $dir = WP_CONTENT_DIR . '/extensions/newsletter/' . $this->module . '/styles';
-        $handle = @opendir($dir);
+        if (is_dir($dir)) {
+            $handle = @opendir($dir);
 
-        if ($handle !== false) {
-            while ($file = readdir($handle)) {
-                if ($file == '.' || $file == '..')
-                    continue;
-                if (isset($list[$file]))
-                    continue;
-                if (substr($file, -4) != '.css')
-                    continue;
-                $list[$file] = substr($file, 0, strlen($file) - 4);
+            if ($handle !== false) {
+                while ($file = readdir($handle)) {
+                    if ($file == '.' || $file == '..')
+                        continue;
+                    if (isset($list[$file]))
+                        continue;
+                    if (substr($file, -4) != '.css')
+                        continue;
+                    $list[$file] = substr($file, 0, strlen($file) - 4);
+                }
+                closedir($handle);
             }
-            closedir($handle);
         }
         return $list;
     }
@@ -546,7 +549,7 @@ class NewsletterModule {
         $name = apply_filters('newsletter_admin_page', $name);
         add_submenu_page(null, $title, $title, ($newsletter->options['editor'] == 1) ? 'manage_categories' : 'manage_options', $name, array($this, 'menu_page'));
     }
-    
+
     function sanitize_file_name($name) {
         return preg_replace('/[^a-z_\\-]/i', '', $name);
     }
